@@ -31,7 +31,14 @@ Same design principles, separate code and separate Drive folder.
    (measurement plan Stage 2). LLM coding and human checks run later, off this collector.
 5. **Call-out review sheet:** a Google Sheet in `callout_review/` with up to 40 flagged comments
    (spread across call-out types) and 10 random unflagged ones, each with the review it sits under.
-   Fill in `is_callout`, `callout_type` and `notes`; the answers are used to tune `detect.py`.
+   About 75% are call-outs that seem aimed at another review or comment (the paper's focus);
+   the rest cover developer-reply call-outs and other flags. Fill in `is_callout`, `true_target`,
+   `callout_type` and `notes`; the answers are used to tune `detect.py`.
+
+Each flagged comment gets a `callout_target` guess: `review_or_comment` (focus),
+`developer_reply`, `game` (the game itself is AI-made, not a call-out) or `unclear`.
+Comment threads rotate one game at a time and mix in ~30% no-reply reviews, and get ~70%
+of the time left after screening.
 
 6. **Overview sheet:** a Google Sheet in `overview/` with one row per panel game (reviews,
    developer reply rate, comments, flagged call-outs, AI disclosure), covering all data so far.

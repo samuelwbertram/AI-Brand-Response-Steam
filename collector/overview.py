@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from . import detect
 from .run import DATA, STATE, RUN_ID, read_parquet, save_parquet
 
 REMOTE = os.environ.get("RCLONE_REMOTE", "steamdrive:")
@@ -27,9 +28,9 @@ LABEL = dt.datetime.now(ZoneInfo("Australia/Melbourne")).date().isoformat()
 
 def update_comment_counts():
     """Add comments from part files not counted before to the running per-game counts."""
-    cols = ["appid", "recommendationid", "comment_id", "any_candidate", "excluded_hit"]
-    path = STATE / "comment_counts.parquet"
-    marker = STATE / "comment_counts_files.json"      # part files already counted
+    cols = ["appid", "recommendationid", "comment_id", "comment_text"]
+    path = STATE / "comment_counts_v2.parquet"   # v2: counts use the call-out target rules
+    marker = STATE / "comment_counts_v2_files.json"      # part files already counted
     counts = read_parquet(path)
     counted = set(json.loads(marker.read_text())) if marker.exists() and counts is not None \
         else set()
@@ -48,10 +49,13 @@ def update_comment_counts():
         return counts
     new = pd.concat([pd.read_parquet(f, columns=cols) for f in todo.values()],
                     ignore_index=True).drop_duplicates("comment_id")
+    new = detect.retag(new)
+    new["focus"] = new["callout_target"] == "review_or_comment"
     g = new.groupby("appid").agg(
         comments=("comment_id", "size"),
         flagged=("any_candidate", lambda x: int(x.fillna(False).sum())),
         flagged_game_words=("excluded_hit", lambda x: int(x.fillna(False).sum())),
+        callouts_of_reviews_or_comments=("focus", "sum"),
         threads_with_comments=("recommendationid", "nunique"))
     if counts is not None:
         g = counts.set_index("appid").add(g, fill_value=0)
@@ -98,7 +102,8 @@ def game_rows(games, counts):
     if out.empty:
         return out
     c = counts.set_index("appid") if counts is not None and len(counts) else pd.DataFrame()
-    for col, name in (("comments", "comments_collected"), ("flagged", "flagged_callouts")):
+    for col, name in (("comments", "comments_collected"), ("flagged", "flagged_callouts"),
+                      ("callouts_of_reviews_or_comments", "callouts_of_reviews_or_comments")):
         out[name] = [int(c[col].get(a, 0)) if col in c else 0 for a in out["appid"]]
     out["flagged_per_1000_comments"] = [
         round(1000 * f / m, 1) if m else "" for f, m in
@@ -126,6 +131,7 @@ def main():
         "reviews_with_dev_reply": int(out["reviews_with_dev_reply"].sum()),
         "comments": int(out["comments_collected"].sum()),
         "flagged_callouts": int(out["flagged_callouts"].sum()),
+        "callouts_of_reviews_or_comments": int(out["callouts_of_reviews_or_comments"].sum()),
         "file": str(path.relative_to(DATA))}, indent=1))
     print(f"overview: {len(out)} games -> {path}")
 

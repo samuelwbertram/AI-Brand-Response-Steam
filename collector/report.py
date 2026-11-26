@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import duckdb
 
+from . import detect
 from .run import DATA, ROOT
 
 LABEL = dt.datetime.now(ZoneInfo("Australia/Melbourne")).strftime("%Y-%m-%d %H%M")
@@ -41,6 +42,10 @@ def main():
     setup = (ROOT / "sql" / "setup.sql").read_text().replace(
         "G:/My Drive/steam_reviews", str(DATA).replace("\\", "/"))
     con.execute(setup)
+    # apply today's call-out rules (and target) to every stored comment, old ones included
+    com = detect.retag(con.execute("SELECT * FROM comments").fetchdf())
+    con.register("comments_retagged", com)
+    con.execute("CREATE OR REPLACE VIEW comments AS SELECT * FROM comments_retagged")
     outdir = DATA / "reports" / LABEL
     outdir.mkdir(parents=True, exist_ok=True)
     summary = []

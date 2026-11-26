@@ -464,6 +464,41 @@ def collect_reviews(cfg, api, games, budget, log):
 
 # ---------------------------------------------------------------- threads
 
+def _round_robin(items):
+    """One thread per game in turn, so a huge game can't use up the day's thread time."""
+    by_game = {}
+    for it in sorted(items, key=lambda t: (t[3],)):          # stable order within a game
+        by_game.setdefault(it[2], []).append(it)
+    games = sorted(by_game, key=lambda a: frac(f"{TODAY}|{a}"))  # game order changes daily
+    out, i = [], 0
+    while any(i < len(by_game[g]) for g in games):
+        out.extend(by_game[g][i] for g in games if i < len(by_game[g]))
+        i += 1
+    return out
+
+
+def order_thread_queue(queue, no_reply_share):
+    """Thread order for a run.
+
+    1. New threads: developer-reply reviews (priority 1) and the no-reply comparison sample
+       (priority 2) mixed, about `no_reply_share` from priority 2; one game at a time in turn.
+    2. Re-checks of known threads (priorities 1 and 2), also game by game.
+    3. Everything else (priority 3), game by game.
+    """
+    new1 = _round_robin([q for q in queue if q[0] == 1 and not q[1]])
+    new2 = _round_robin([q for q in queue if q[0] == 2 and not q[1]])
+    mixed, a, b = [], 0, 0
+    while a < len(new1) or b < len(new2):
+        want_b = b < len(new2) and (a >= len(new1) or (b + 1) / (a + b + 1) <= no_reply_share)
+        if want_b:
+            mixed.append(new2[b]); b += 1
+        else:
+            mixed.append(new1[a]); a += 1
+    rechecks = _round_robin([q for q in queue if q[0] in (1, 2) and q[1]])
+    rest = _round_robin([q for q in queue if q[0] not in (1, 2)])
+    return mixed + rechecks + rest
+
+
 def collect_threads(cfg, com, games, budget, log):
     panel = games[games["in_panel"].fillna(False)]["appid"].astype(int).tolist()
     recheck = cfg["threads"]["recheck_every_days"]
@@ -480,7 +515,7 @@ def collect_threads(cfg, com, games, budget, log):
             if due:
                 queue.append((int(r.get("thread_priority") or 3), last is not None,
                               appid, r["recommendationid"], r["author_steamid"], cc))
-    queue.sort()  # priority 1 first, never-scraped before re-checks
+    queue = order_thread_queue(queue, cfg["threads"].get("no_reply_share_of_queue", 0.3))
     log["threads_queued"] = len(queue)
 
     seen_path = STATE / "comments_seen.parquet"

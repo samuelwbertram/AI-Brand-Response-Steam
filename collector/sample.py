@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from . import detect
 from .run import DATA, STATE, TODAY, RUN_ID, load_cfg, read_parquet, save_parquet
 
 REMOTE = os.environ.get("RCLONE_REMOTE", "steamdrive:")
@@ -58,21 +59,30 @@ def load_comments(first_time):
     return local
 
 
-def pick(comments, sampled, n_cand, n_rand, seed):
-    pool = comments[~comments["comment_id"].astype(str).isin(sampled)]
-    rng = random.Random(seed)
-    cand = pool[pool["any_candidate"].fillna(False)]
-    # round-robin across families so rarer call-out types still show up
+def _spread(cand, n, rng, chosen):
+    """Round-robin across call-out families so rarer types still show up."""
     by_fam = {f: list(cand[cand[f"cand_{f}"].fillna(False)]["comment_id"]) for f in FAMILIES
               if f"cand_{f}" in cand}
     for ids in by_fam.values():
         rng.shuffle(ids)
-    chosen, i = [], 0
-    while len(chosen) < n_cand and any(i < len(v) for v in by_fam.values()):
+    i, start = 0, len(chosen)
+    while len(chosen) - start < n and any(i < len(v) for v in by_fam.values()):
         for ids in by_fam.values():
-            if i < len(ids) and ids[i] not in chosen and len(chosen) < n_cand:
+            if i < len(ids) and ids[i] not in chosen and len(chosen) - start < n:
                 chosen.append(ids[i])
         i += 1
+    return chosen
+
+
+def pick(comments, sampled, n_cand, n_rand, seed, focus_share=0.75):
+    """Flagged comments, mostly call-outs of reviews/comments (the paper's focus), plus a
+    random check of unflagged ones."""
+    pool = comments[~comments["comment_id"].astype(str).isin(sampled)]
+    rng = random.Random(seed)
+    cand = pool[pool["any_candidate"].fillna(False)]
+    focus = cand[cand["callout_target"] == "review_or_comment"]
+    chosen = _spread(focus, int(round(n_cand * focus_share)), rng, [])
+    chosen = _spread(cand[~cand["comment_id"].isin(chosen)], n_cand - len(chosen), rng, chosen)
     rest = list(pool[~pool["any_candidate"].fillna(False)]["comment_id"])
     rng.shuffle(rest)
     rows = pool.set_index("comment_id")
@@ -114,7 +124,9 @@ def steamids(appids):
 
 
 def clip(text, n):
-    t = " ".join(str(text or "").split())
+    if text is None or (isinstance(text, float) and pd.isna(text)):
+        return ""
+    t = " ".join(str(text).split())
     return t if len(t) <= n else t[: n - 1] + "…"
 
 
@@ -132,6 +144,7 @@ def main():
         print("callout sample: no comments yet")
         return
     comments["comment_id"] = comments["comment_id"].astype(str)
+    comments = detect.retag(comments)
     s = pick(comments, sampled, n_cand, n_rand, seed=RUN_ID)
     if s.empty:
         print("callout sample: nothing new to sample")
@@ -172,8 +185,12 @@ def main():
         .dt.strftime("%Y-%m-%d").fillna(""),
         "comment_text": [clip(t, 600) for t in s["comment_text"]],
         "regex_flags": [flags(r) for r in s.to_dict("records")],
+        "likely_target": s["callout_target"].map({
+            "review_or_comment": "another review/comment", "developer_reply": "developer reply",
+            "game": "the game (AI-made)", "unclear": "unclear"}).fillna(""),
         "net": s["net"],
         "is_callout (Y/N)": "",
+        "true_target (review-comment / dev reply / game / none)": "",
         "callout_type (AI / fake / shill / no experience / other)": "",
         "notes": "",
         "comment_id": s["comment_id"],

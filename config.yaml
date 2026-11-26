@@ -7,7 +7,7 @@ drive:
   root_folder_id: "1LW3ZNsVlJk8ElAaZUfv3nBwuYAYJeoTe"
 
 time_budget_minutes: 300        # stop collecting after 5 h; GitHub kills jobs at 6 h
-api_time_share: 0.5             # share of the time budget for the reviews API; the rest goes to threads
+api_time_share: 0.3             # share of the time left after screening for the reviews API; the rest (70%) goes to comment threads
 incremental_window_days: 14     # daily pull re-reads the last 14 days (early replies, daily vote counts)
 backfill_calls_per_game_per_run: 1500   # stops one huge game eating the whole backfill
 
@@ -45,6 +45,8 @@ threads:
   # Priority 3: everything else with comments, only if time is left
   no_reply_sample_share: 0.10
   recheck_every_days: 7         # re-scrape known threads for new call-outs
+  no_reply_share_of_queue: 0.3  # new threads: ~30% from no-reply reviews (silent-brand comparison), 70% with a reply
+  # Threads go one game at a time in turn (order reshuffled daily), so no single game takes the day.
 
 callout_sample:                 # daily Google Sheet in callout_review/ for checking the regex net by hand
   n_candidates: 40              # flagged comments per sheet, spread across call-out types
