@@ -114,7 +114,7 @@ jobs:
             rclone copy data steamdrive: --transfers 4 --exclude "*.tmp" --exclude "callout_review/**" --exclude "overview/**"
             # the call-out sample becomes a Google Sheet you can fill in on your phone
             for d in callout_review overview; do
-              if [ -d "data/$d" ]; then rclone copy "data/$d" "steamdrive:$d" --drive-import-formats csv; fi
+              if [ -d "data/$d" ]; then rclone copy "data/$d" "steamdrive:$d" --drive-import-formats csv --drive-export-formats csv; fi
             done
           fi
 

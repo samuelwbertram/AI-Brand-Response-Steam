@@ -35,7 +35,6 @@ jobs:
         env:
           RCLONE_DRIVE_TOKEN: ${{ secrets.RCLONE_DRIVE_TOKEN }}
         run: |
-          echo "Drive token present: $([ -n "$RCLONE_DRIVE_TOKEN" ] && echo yes || echo no) (${#RCLONE_DRIVE_TOKEN} chars)"
           FOLDER_ID=$(python -c "import yaml;print(yaml.safe_load(open('config.yaml'))['drive']['root_folder_id'])")
           mkdir -p ~/.config/rclone
           {
@@ -45,9 +44,7 @@ jobs:
             echo "root_folder_id = ${FOLDER_ID}"
             echo "token = ${RCLONE_DRIVE_TOKEN}"
           } > ~/.config/rclone/rclone.conf
-          rclone version | head -1
-          awk -F' = ' '{print $1, length($2)}' ~/.config/rclone/rclone.conf
-          rclone lsf steamdrive: --max-depth 1
+          rclone lsf steamdrive: --max-depth 1 > /dev/null
 
       - name: Download the data from Drive
         run: |
@@ -65,5 +62,5 @@ jobs:
 
       - name: Upload results to Drive as Google Sheets
         run: |
-          rclone copy data/reports steamdrive:reports --drive-import-formats csv
-          rclone copy data/overview steamdrive:overview --drive-import-formats csv
+          rclone copy data/reports steamdrive:reports --drive-import-formats csv --drive-export-formats csv
+          rclone copy data/overview steamdrive:overview --drive-import-formats csv --drive-export-formats csv
