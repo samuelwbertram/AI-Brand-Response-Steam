@@ -84,6 +84,17 @@ def fake_request(self, method, url, params=None, data=None, **kw):
         nxt = str(start + len(page)) if page else body["cursor"]
         return Resp(payload={"response": {"reviews": page, "cursor": nxt,
                                           "total_matching": len(revs)}})
+    if "search/results" in url:
+        if params["start"] > 0:
+            return Resp(payload={"results_html": ""})
+        return Resp(payload={"results_html": """
+          <a class="search_result_row" data-ds-appid="1285190"><span class="title">Borderlands 4</span>
+            <span class="search_review_summary" data-tooltip-html="Mixed<br>60% of the 90,000 user reviews for this game are positive."></span></a>
+          <a class="search_result_row" data-ds-appid="999"><span class="title">Found Game</span>
+            <div class="search_released">1 Jan, 2025</div>
+            <span class="search_review_summary" data-tooltip-html="Very Positive<br>88% of the 30,979 user reviews for this game are positive."></span></a>
+          <a class="search_result_row" data-ds-appid="998"><span class="title">Tiny</span>
+            <span class="search_review_summary" data-tooltip-html="Positive<br>92% of the 14 user reviews for this game are positive."></span></a>"""})
     if "appdetails" in url:
         a = params["appids"]
         return Resp(payload={str(a): {"success": True, "data": {
@@ -128,6 +139,7 @@ def main():
     print(games[["appid", "name_matches", "ai_disclosed", "screen_reply_rate", "in_panel"]])
     vers = pd.concat(pd.read_parquet(p) for p in __import__("glob").glob(f"{TMP}/reviews/**/*.parquet", recursive=True))
     com = pd.concat(pd.read_parquet(p) for p in __import__("glob").glob(f"{TMP}/comments/**/*.parquet", recursive=True))
+    assert set(games.appid) == {1295660, 2073850, 1285190, 999}, set(games.appid)
     print("review versions:", len(vers), "unique:", vers.recommendationid.nunique())
     print("comments:", len(com), "unique:", com.comment_id.nunique(),
           "candidates:", int(com.any_candidate.sum()), "excluded hits:", int(com.excluded_hit.sum()))

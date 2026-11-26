@@ -20,7 +20,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from . import community, detect, steam_api, store
+from . import community, detect, discover, steam_api, store
 from .http_client import PoliteClient, RateLimited
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -153,17 +153,57 @@ def write_json(obj, rel):
     path.write_text(json.dumps(obj, indent=2, default=str))
 
 
+# ---------------------------------------------------------------- candidates
+
+def load_candidates():
+    """Hand-picked seeds (games/candidates.csv) plus games found by discovery."""
+    cands = pd.read_csv(ROOT / "games" / "candidates.csv")[["appid", "expected_name", "source"]]
+    found = read_parquet(STATE / "candidates.parquet")
+    if found is not None:
+        cands = pd.concat([cands, found], ignore_index=True)
+    return cands.drop_duplicates("appid", keep="first")
+
+
+def run_discovery(cfg, api, log):
+    dc = cfg["discovery"]
+    old = read_parquet(STATE / "candidates.parquet")
+    n_old = 0 if old is None else len(old)
+    fresh = old is not None and (dt.date.fromisoformat(TODAY) - dt.date.fromisoformat(
+        str(old["discovered_date"].max()))).days < dc["refresh_every_days"]
+    if n_old >= dc["target_candidates"] and fresh:
+        return
+    try:
+        known = [] if old is None else old["appid"].astype(int).tolist()
+        found, pages = discover.discover(api, dc["target_candidates"],
+                                         cfg["screening"]["min_total_reviews"], known=known)
+    except Exception as e:
+        log["errors"].append(f"discovery: {type(e).__name__}: {e}")
+        return
+    new = pd.DataFrame(found)
+    if len(new):
+        new["source"] = "store_search"
+        new["discovered_date"] = TODAY
+        out = new if old is None else pd.concat([old, new], ignore_index=True)
+        out.to_parquet(STATE / "candidates.parquet", index=False)
+    elif old is not None:
+        old["discovered_date"] = TODAY
+        old.to_parquet(STATE / "candidates.parquet", index=False)
+    log["discovery"] = {"pages": pages, "new_candidates": int(len(new)),
+                        "total_candidates": n_old + int(len(new))}
+
+
 # ---------------------------------------------------------------- screening
 
 def screen(cfg, api, budget, log):
     sc = cfg["screening"]
-    cands = pd.read_csv(ROOT / "games" / "candidates.csv")
+    cands = load_candidates()
+    screen_budget = Budget(min(sc.get("max_minutes_per_run", 150), budget.left() / 60))
     old = read_parquet(STATE / "games.parquet")
     done = {}
     if old is not None:
         for r in old.to_dict("records"):
             done[int(r["appid"])] = r
-    rows = []
+    rows, stopped_for_time = [], False
     for c in cands.to_dict("records"):
         appid = int(c["appid"])
         prev = done.get(appid)
@@ -172,13 +212,14 @@ def screen(cfg, api, budget, log):
         ).days < sc["rescreen_every_days"]:
             rows.append(prev)
             continue
-        if not budget.ok(1800):
-            log["notes"].append("screening stopped early for time")
+        if not screen_budget.ok(0):
+            stopped_for_time = True
             if prev:
                 rows.append(prev)
             continue
         row = dict(prev or {})
-        row.update({"appid": appid, "expected_name": c["expected_name"], "source": c["source"]})
+        row.update({"appid": appid, "expected_name": c["expected_name"], "source": c["source"],
+                    "in_panel": False, "screened_date": None, "screen_error": None})
         try:
             meta = store.app_details(api, appid) or {}
             row.update(meta)
@@ -218,6 +259,9 @@ def screen(cfg, api, budget, log):
             row["screen_error"] = str(e)[:300]
         rows.append(row)
     games = pd.DataFrame(rows)
+    if stopped_for_time:
+        log["notes"].append("screening paused for time; it continues next run")
+    log["screening_left"] = int(len(cands) - len(games))
     games.to_parquet(STATE / "games.parquet", index=False)
     write_parquet(games, f"screening/screen-{RUN_ID}.parquet")
     log["screened"] = int(len(games))
@@ -462,11 +506,13 @@ def daily(cfg, force_screen=False):
     t0 = time.time()
     try:
         games = read_parquet(STATE / "games.parquet")
-        due = games is None or force_screen or games["screened_date"].isna().any() or any(
+        due = games is None or force_screen or "screened_date" not in games or \
+            games["screened_date"].isna().any() or any(
             (dt.date.fromisoformat(TODAY) - dt.date.fromisoformat(d)).days
             >= cfg["screening"]["rescreen_every_days"] for d in games["screened_date"].dropna())
+        run_discovery(cfg, api, log)
         new_cands = games is None or not set(
-            pd.read_csv(ROOT / "games" / "candidates.csv")["appid"]).issubset(set(games["appid"]))
+            load_candidates()["appid"]).issubset(set(games["appid"]))
         if due or new_cands:
             games = screen(cfg, api, budget, log)
         collect_reviews(cfg, api, games, budget, log)

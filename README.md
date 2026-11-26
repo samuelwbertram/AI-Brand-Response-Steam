@@ -18,7 +18,10 @@ Same design principles, separate code and separate Drive folder.
 
 ## Daily run (GitHub Actions, 04:23 Melbourne)
 
-1. **Screen** candidate games (monthly): reply rate from the 500 most recent reviews, AI disclosure.
+0. **Discover** candidate games (monthly) from Steam's store search, popular games first,
+   keeping games with 500+ reviews up to `discovery.target_candidates` in `config.yaml`
+   (2,000 to start; raise it to grow the panel).
+1. **Screen** candidate games (up to 150 minutes a run, continuing on later runs): reply rate from the 500 most recent reviews, AI disclosure.
    Panel = games with reply rate ≥ 1%, plus a random 10% of the rest for base rates.
 2. **Reviews:** every panel game's last 14 days, every day; a 90-day re-sweep once a week per
    game (catches late developer replies, edits, deletions); then the backfill to Jan 2022.

@@ -23,7 +23,12 @@ community:                      # steamcommunity.com comment threads (HTML, grey
   stop_on_first_429: true       # back off for the day; never rotate IPs
   comments_per_call: 100
 
+discovery:                      # finds candidate games from Steam's store search, popular first
+  target_candidates: 2000       # raise this to grow the panel (e.g. 5000, 10000)
+  refresh_every_days: 30        # look for newly popular games monthly
+
 screening:
+  max_minutes_per_run: 150      # screening pauses here so collection also runs; continues next run
   reviews_per_game: 500         # 5 calls per candidate
   reply_rate_cutoff: 0.01       # games at or above this join the panel
   random_keep_share: 0.10       # share of below-cutoff games kept for base rates
