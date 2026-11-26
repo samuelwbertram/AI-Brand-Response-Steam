@@ -1,0 +1,65 @@
+name: Steam data – SQL report
+
+# Runs the starter SQL queries and the overview on everything collected so far, and saves
+# the results to Drive as Google Sheets (steam_reviews/reports/ and overview/).
+# Read-only on Steam: it never calls Steam, so it can run while the collector runs.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: steam-report
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt duckdb
+
+      - name: Install rclone
+        run: curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Configure Drive (steam_reviews folder only)
+        env:
+          RCLONE_DRIVE_TOKEN: ${{ secrets.RCLONE_DRIVE_TOKEN }}
+        run: |
+          FOLDER_ID=$(python -c "import yaml;print(yaml.safe_load(open('config.yaml'))['drive']['root_folder_id'])")
+          mkdir -p ~/.config/rclone
+          {
+            echo "[steamdrive]"
+            echo "type = drive"
+            echo "scope = drive"
+            echo "root_folder_id = ${FOLDER_ID}"
+            echo "token = ${RCLONE_DRIVE_TOKEN}"
+          } > ~/.config/rclone/rclone.conf
+
+      - name: Download the data from Drive
+        run: |
+          for d in state reviews comments metrics; do
+            rclone copy "steamdrive:$d" "data/$d" --transfers 8 --exclude "*.tmp"
+          done
+          du -sh data/*
+
+      - name: Run the SQL queries and the overview
+        env:
+          NO_DRIVE: "1"          # overview counts the comments downloaded above
+        run: |
+          python -m collector.report
+          python -m collector.overview
+
+      - name: Upload results to Drive as Google Sheets
+        run: |
+          rclone copy data/reports steamdrive:reports --drive-import-formats csv
+          rclone copy data/overview steamdrive:overview --drive-import-formats csv
