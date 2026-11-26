@@ -12,7 +12,8 @@ from bs4 import BeautifulSoup
 
 from .steam_api import hash_id
 
-RENDER = "https://steamcommunity.com/comment/Recommendation/render/{steamid}/{recid}/"
+# Thread id is Recommendation_<owner steamid>_<appid>; feature = appid (checked 26 Nov 2026).
+RENDER = "https://steamcommunity.com/comment/Recommendation/render/{steamid}/{appid}/"
 REVIEW_PAGE = "https://steamcommunity.com/profiles/{steamid}/recommended/{appid}/"
 
 
@@ -23,7 +24,9 @@ def parse_comments(html, appid, recid):
         cid = (c.get("id") or "").replace("comment_", "") or None
         author = c.select_one("a.commentthread_author_link")
         text_el = c.select_one("div.commentthread_comment_text")
-        ts_el = c.select_one("span.commentthread_comment_timestamp")
+        # The page has an empty timestamp div first; the real one carries data-timestamp.
+        ts_el = (c.select_one(".commentthread_comment_timestamp[data-timestamp]")
+                 or c.select_one(".commentthread_comment_timestamp"))
         badges = [b.get_text(" ", strip=True) for b in c.select(
             "[class*=badge], [class*=developer], [class*=official]")]
         account_id = author.get("data-miniprofile") if author else None
@@ -43,7 +46,7 @@ def parse_comments(html, appid, recid):
             "author_badges": ";".join(b for b in badges if b) or None,
             "comment_text": text,
             "timestamp": ts,
-            "timestamp_display": ts_el.get_text(strip=True) if ts_el else None,
+            "timestamp_display": ts_el.get_text(" ", strip=True).replace("\xa0", " ").strip() if ts_el else None,
             "timestamp_title": ts_el.get("title") if ts_el else None,
         })
     return rows
@@ -53,8 +56,8 @@ def fetch_thread_render(client, appid, steamid, recid, per_call=100):
     """Method A. Returns (rows, total_count) or raises ValueError if unusable."""
     rows, start, total = [], 0, None
     while True:
-        r = client.post(RENDER.format(steamid=steamid, recid=recid),
-                        data={"start": start, "count": per_call})
+        r = client.post(RENDER.format(steamid=steamid, appid=appid),
+                        data={"start": start, "count": per_call, "feature2": -1})
         if r.status_code != 200:
             raise ValueError(f"render HTTP {r.status_code}")
         try:

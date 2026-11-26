@@ -45,13 +45,14 @@ REVIEWS = {a: make_reviews(a) for a in (1295660, 2073850, 1285190)}
 COMMENT_HTML = """
 <div class="commentthread_comment" id="comment_111{n}">
   <a class="commentthread_author_link" data-miniprofile="555{n}"><bdi>someone</bdi></a>
-  <span class="commentthread_comment_timestamp" title="26 November 2026 @ 9:15pm"
-        data-timestamp="{ts}">26 Nov @ 9:15pm</span>
+  <div class="commentthread_comment_timestamp"></div>
+  <div class="commentthread_comment_timestamp" title="26 November 2026 @ 9:15pm"
+        data-timestamp="{ts}">26 Nov @ 9:15pm&nbsp;</div>
   <div class="commentthread_comment_text">this review is clearly written by ChatGPT lol</div>
 </div>
 <div class="commentthread_comment" id="comment_222{n}">
   <a class="commentthread_author_link" data-miniprofile="666{n}"><bdi>other</bdi></a>
-  <span class="commentthread_comment_timestamp" data-timestamp="{ts}">26 Nov</span>
+  <div class="commentthread_comment_timestamp" data-timestamp="{ts}">26 Nov</div>
   <div class="commentthread_comment_text">agreed, enemy AI is broken though</div>
 </div>"""
 
@@ -94,7 +95,7 @@ def fake_request(self, method, url, params=None, data=None, **kw):
             if "2073850" in url else "<html>no disclosure</html>"
         return Resp(text=txt)
     if "comment/Recommendation/render" in url:
-        rid = u.path.rstrip("/").split("/")[-1]
+        rid = u.path.rstrip("/").split("/")[-2] + u.path.rstrip("/").split("/")[-1]
         return Resp(payload={"success": True, "total_count": 2,
                              "comments_html": COMMENT_HTML.format(n=rid, ts=NOW - 100)})
     if "/recommended/" in url:
