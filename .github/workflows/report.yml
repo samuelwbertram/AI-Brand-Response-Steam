@@ -45,6 +45,9 @@ jobs:
             echo "root_folder_id = ${FOLDER_ID}"
             echo "token = ${RCLONE_DRIVE_TOKEN}"
           } > ~/.config/rclone/rclone.conf
+          rclone version | head -1
+          awk -F' = ' '{print $1, length($2)}' ~/.config/rclone/rclone.conf
+          rclone lsf steamdrive: --max-depth 1
 
       - name: Download the data from Drive
         run: |
