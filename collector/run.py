@@ -44,12 +44,19 @@ def frac(key):
     return int(hashlib.sha1(str(key).encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
 
 
+def save_parquet(df, path):
+    """Write to a temp file then swap it in, so mid-run uploads never see half a file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+
+
 def write_parquet(df, rel):
     if df is None or len(df) == 0:
         return None
-    path = DATA / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(path, index=False)
+    save_parquet(df, DATA / rel)
     return str(rel)
 
 
@@ -184,10 +191,10 @@ def run_discovery(cfg, api, log):
         new["source"] = "store_search"
         new["discovered_date"] = TODAY
         out = new if old is None else pd.concat([old, new], ignore_index=True)
-        out.to_parquet(STATE / "candidates.parquet", index=False)
+        save_parquet(out, STATE / "candidates.parquet")
     elif old is not None:
         old["discovered_date"] = TODAY
-        old.to_parquet(STATE / "candidates.parquet", index=False)
+        save_parquet(old, STATE / "candidates.parquet")
     log["discovery"] = {"pages": pages, "new_candidates": int(len(new)),
                         "total_candidates": n_old + int(len(new))}
 
@@ -203,7 +210,7 @@ def screen(cfg, api, budget, log):
     if old is not None:
         for r in old.to_dict("records"):
             done[int(r["appid"])] = r
-    rows, stopped_for_time = [], False
+    rows, stopped_for_time, fresh = [], False, 0
     for c in cands.to_dict("records"):
         appid = int(c["appid"])
         prev = done.get(appid)
@@ -258,11 +265,14 @@ def screen(cfg, api, budget, log):
             log["errors"].append(f"screen {appid}: {type(e).__name__}: {e}")
             row["screen_error"] = str(e)[:300]
         rows.append(row)
+        fresh += 1
+        if fresh % 25 == 0:      # checkpoint: progress survives a crash and shows up on Drive
+            save_parquet(pd.DataFrame(rows), STATE / "games.parquet")
     games = pd.DataFrame(rows)
     if stopped_for_time:
         log["notes"].append("screening paused for time; it continues next run")
     log["screening_left"] = int(len(cands) - len(games))
-    games.to_parquet(STATE / "games.parquet", index=False)
+    save_parquet(games, STATE / "games.parquet")
     write_parquet(games, f"screening/screen-{RUN_ID}.parquet")
     log["screened"] = int(len(games))
     log["panel_size"] = int(games.get("in_panel", pd.Series(dtype=bool)).fillna(False).sum())
@@ -336,8 +346,7 @@ class AppState:
             for c in self.COLS:
                 if c not in df:
                     df[c] = None
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            df[self.COLS].to_parquet(self.path, index=False)
+            save_parquet(df[self.COLS], self.path)
         tag = f"app={self.appid}-{RUN_ID}.parquet"
         write_parquet(pd.DataFrame(self.versions), f"reviews/date={TODAY}/{tag}")
         write_parquet(pd.DataFrame(self.metrics), f"metrics/date={TODAY}/{tag}")
@@ -451,7 +460,27 @@ def collect_threads(cfg, com, games, budget, log):
     seen = set() if seen_df is None else set(seen_df["comment_id"].astype(str))
     method = (json.loads((STATE / "progress.json").read_text()).get("_thread_method")
               if (STATE / "progress.json").exists() else None)
-    new_rows, scraped, updates = [], 0, {}
+    new_rows, updates = [], {}
+    tot = {"scraped": 0, "new_comments": 0, "candidates": 0, "parts": 0}
+
+    def flush():
+        for appid, recs in updates.items():
+            st = AppState(appid)
+            for rid, cc in recs.items():
+                if rid in st.rows:
+                    st.rows[rid]["thread_scraped_date"] = TODAY
+                    st.rows[rid]["thread_comment_count"] = cc
+            st.save()
+        if new_rows:
+            tot["parts"] += 1
+            write_parquet(pd.DataFrame(new_rows),
+                          f"comments/date={TODAY}/part-{RUN_ID}-{tot['parts']:03d}.parquet")
+            tot["new_comments"] += len(new_rows)
+            tot["candidates"] += int(sum(r["any_candidate"] for r in new_rows))
+        save_parquet(pd.DataFrame({"comment_id": sorted(seen)}), seen_path)
+        new_rows.clear()
+        updates.clear()
+
     try:
         for prio, _, appid, rid, sid, cc in queue:
             if not budget.ok(900):
@@ -463,7 +492,7 @@ def collect_threads(cfg, com, games, budget, log):
             except ValueError as e:
                 log["errors"].append(f"thread {rid}: {e}")
                 continue
-            scraped += 1
+            tot["scraped"] += 1
             for row in rows:
                 if row["comment_id"] in seen:
                     continue
@@ -472,26 +501,18 @@ def collect_threads(cfg, com, games, budget, log):
                 row.update({"thread_priority": prio, "first_seen": TODAY, "run_id": RUN_ID})
                 new_rows.append(row)
             updates.setdefault(appid, {})[rid] = cc
+            if tot["scraped"] % 200 == 0:   # about every 10 minutes at 3 s a page
+                flush()
     except RateLimited as e:
-        log["notes"].append(f"community rate-limited after {scraped} threads: {e}")
-
-    for appid, recs in updates.items():
-        st = AppState(appid)
-        for rid, cc in recs.items():
-            if rid in st.rows:
-                st.rows[rid]["thread_scraped_date"] = TODAY
-                st.rows[rid]["thread_comment_count"] = cc
-        st.save()
-    write_parquet(pd.DataFrame(new_rows), f"comments/date={TODAY}/part-{RUN_ID}.parquet")
-    pd.DataFrame({"comment_id": sorted(seen)}).to_parquet(seen_path, index=False)
+        log["notes"].append(f"community rate-limited after {tot['scraped']} threads: {e}")
+    flush()
     if method:
         pp = STATE / "progress.json"
         prog = json.loads(pp.read_text()) if pp.exists() else {}
         prog["_thread_method"] = method
         pp.write_text(json.dumps(prog, indent=1))
-    log["threads"] = {"scraped": scraped, "new_comments": len(new_rows),
-                      "candidate_callouts": int(sum(r["any_candidate"] for r in new_rows)),
-                      "method": method}
+    log["threads"] = {"scraped": tot["scraped"], "new_comments": tot["new_comments"],
+                      "candidate_callouts": tot["candidates"], "method": method}
 
 
 # ---------------------------------------------------------------- main

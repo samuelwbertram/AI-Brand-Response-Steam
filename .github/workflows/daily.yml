@@ -62,13 +62,23 @@ jobs:
       - name: Download state from Drive
         run: if [ -z "$NO_DRIVE" ]; then rclone copy steamdrive:state data/state --create-empty-src-dirs || true; fi
 
-      - name: Run collector
-        run: python -m collector.run "$MODE"
+      - name: Run collector (uploads to Drive every 10 minutes)
+        run: |
+          if [ -z "$NO_DRIVE" ]; then
+            ( while sleep 600; do
+                rclone copy data steamdrive: --transfers 4 --exclude "*.tmp" > /dev/null 2>&1 || true
+              done ) &
+            SYNC_PID=$!
+          fi
+          STATUS=0
+          python -m collector.run "$MODE" || STATUS=$?
+          if [ -n "$SYNC_PID" ]; then kill "$SYNC_PID" 2>/dev/null || true; fi
+          exit $STATUS
 
       - name: Upload results to Drive
         if: always()
         run: |
-          if [ -d data ] && [ -z "$NO_DRIVE" ]; then rclone copy data steamdrive: --transfers 4; fi
+          if [ -d data ] && [ -z "$NO_DRIVE" ]; then rclone copy data steamdrive: --transfers 4 --exclude "*.tmp"; fi
 
       - name: Keep run log on GitHub too
         if: always()
