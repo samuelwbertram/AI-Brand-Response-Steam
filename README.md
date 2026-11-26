@@ -29,6 +29,12 @@ Same design principles, separate code and separate Drive folder.
    commented reviews without a reply, (3) the rest if time allows. Threads are re-checked weekly.
 4. **Call-out candidates:** a regex net marks possible call-outs in each new comment
    (measurement plan Stage 2). LLM coding and human checks run later, off this collector.
+5. **Call-out review sheet:** a Google Sheet in `callout_review/` with up to 40 flagged comments
+   (spread across call-out types) and 10 random unflagged ones, each with the review it sits under.
+   Fill in `is_callout`, `callout_type` and `notes`; the answers are used to tune `detect.py`.
+
+A backup run at 16:23 Melbourne starts only if no run went in the previous 13 hours
+(GitHub sometimes drops scheduled runs).
 
 Each review is stored only when it is new or changed, so the data is a version history.
 Votes are stored daily for reviews with comments or a developer reply.
@@ -49,10 +55,16 @@ metrics/date=/  daily votes for focus reviews
 disappeared/    reviews that vanished in a complete re-sweep
 comments/date=/ new comments + call-out candidate flags
 runs/           one JSON log per run (calls, counts, errors)
+callout_review/ daily call-out review sheets (Google Sheets) for hand checks
 smoke/          smoke-test reports
 ```
 
 Raw Steam IDs exist only in `state/latest/` on Drive (needed to fetch threads), never in this repo.
+
+## Tests
+
+`PYTHONPATH=. python tests/test_offline.py` fakes every Steam response and checks a full run
+offline, including the call-out sheet.
 
 ## Setup
 

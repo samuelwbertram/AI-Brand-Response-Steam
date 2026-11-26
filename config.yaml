@@ -45,3 +45,7 @@ threads:
   # Priority 3: everything else with comments, only if time is left
   no_reply_sample_share: 0.10
   recheck_every_days: 7         # re-scrape known threads for new call-outs
+
+callout_sample:                 # daily Google Sheet in callout_review/ for checking the regex net by hand
+  n_candidates: 40              # flagged comments per sheet, spread across call-out types
+  n_random_checks: 10           # unflagged comments, to catch call-outs the net misses

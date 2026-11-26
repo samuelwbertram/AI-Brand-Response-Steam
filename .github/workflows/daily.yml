@@ -2,7 +2,8 @@ name: Steam reviews – daily collect
 
 on:
   schedule:
-    - cron: "23 17 * * *"   # 04:23 Melbourne (AEDT) / 03:23 (AEST), quiet hours for Steam
+    - cron: "23 17 * * *"   # main run: 04:23 Melbourne (AEDT) / 03:23 (AEST), quiet hours for Steam
+    - cron: "23 5 * * *"    # backup: 16:23 Melbourne (AEDT); skips itself if a run already went in the last 13 h
   workflow_dispatch:
     inputs:
       mode:
@@ -16,8 +17,37 @@ concurrency:
   group: steam-collector          # never run two collectors at once (one IP, one pace)
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: read                   # lets the backup slot see whether today's run already happened
+
 jobs:
+  guard:                          # the backup slot runs only if nothing ran in the last 13 hours
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "${{ github.event.schedule }}" != "23 5 * * *" ]; then
+            echo "go=1" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          SINCE=$(date -u -d '13 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          N=$(gh api "repos/${{ github.repository }}/actions/workflows/daily.yml/runs?created=%3E%3D${SINCE}&per_page=50" \
+                --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }}) | select(.conclusion == "success" or .status == "in_progress" or .status == "queued" or .status == "waiting")] | length')
+          echo "Other runs since ${SINCE}: ${N}"
+          if [ "${N:-0}" -gt 0 ]; then
+            echo "::notice::Backup slot skipped - a run already went in the last 13 hours"
+            echo "go=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=1" >> "$GITHUB_OUTPUT"
+          fi
+
   collect:
+    needs: guard
+    if: needs.guard.outputs.go == '1'
     runs-on: ubuntu-latest
     timeout-minutes: 350
     env:
@@ -66,19 +96,26 @@ jobs:
         run: |
           if [ -z "$NO_DRIVE" ]; then
             ( while sleep 600; do
-                rclone copy data steamdrive: --transfers 4 --exclude "*.tmp" > /dev/null 2>&1 || true
+                rclone copy data steamdrive: --transfers 4 --exclude "*.tmp" --exclude "callout_review/**" > /dev/null 2>&1 || true
               done ) &
             SYNC_PID=$!
           fi
           STATUS=0
           python -m collector.run "$MODE" || STATUS=$?
+          if [ "$MODE" != "smoke" ]; then python -m collector.sample || echo "::warning::call-out sample failed"; fi
           if [ -n "$SYNC_PID" ]; then kill "$SYNC_PID" 2>/dev/null || true; fi
           exit $STATUS
 
       - name: Upload results to Drive
         if: always()
         run: |
-          if [ -d data ] && [ -z "$NO_DRIVE" ]; then rclone copy data steamdrive: --transfers 4 --exclude "*.tmp"; fi
+          if [ -d data ] && [ -z "$NO_DRIVE" ]; then
+            rclone copy data steamdrive: --transfers 4 --exclude "*.tmp" --exclude "callout_review/**"
+            # the call-out sample becomes a Google Sheet you can fill in on your phone
+            if [ -d data/callout_review ]; then
+              rclone copy data/callout_review steamdrive:callout_review --drive-import-formats csv
+            fi
+          fi
 
       - name: Keep run log on GitHub too
         if: always()

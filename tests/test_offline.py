@@ -147,6 +147,18 @@ def main():
     assert len(com) == com.comment_id.nunique()
     assert "author_steamid" not in vers.columns
     assert com.timestamp.notna().all()
+    # call-out sample sheet (no Drive in tests)
+    os.environ["NO_DRIVE"] = "1"
+    from collector import sample
+    sample.main()
+    sheet = pd.read_csv(__import__("glob").glob(f"{TMP}/callout_review/*.csv")[0])
+    print(sheet[["game", "review_says", "net", "regex_flags"]].head(8))
+    assert 0 < len(sheet) <= 50 and set(sheet.net) <= {"flagged", "random check"}
+    assert sheet.review_link.str.startswith("https://steamcommunity.com/profiles/").all()
+    assert (sheet.review_text.fillna("") != "").all()
+    sample.main()   # second pass must not repeat comments
+    again = pd.read_parquet(f"{TMP}/state/callout_sampled.parquet")
+    assert again.comment_id.is_unique
     print("ALL OFFLINE CHECKS PASSED")
     shutil.rmtree(TMP)
 
