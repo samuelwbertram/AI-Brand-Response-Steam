@@ -121,5 +121,35 @@ GROUP BY ALL
 ORDER BY date DESC;
 
 
+-- Q12. Only the AI call-outs: comments saying something is AI-written or a bot, split by what
+--      they seem to target. Target is a keyword guess: words like dev / developer / response /
+--      reply point at the developer's reply; everything else points at the review or another
+--      comment. Steam comments are flat (no reply threads), so "another comment" and "the review"
+--      can't be told apart by structure - read the comment to judge.
+WITH ai_callouts AS (
+    SELECT c.*,
+           CASE WHEN regexp_matches(lower(c.comment_text),
+                     '\b(dev|devs|developers?|response|responses|reply|replies|replied|responded|support|pr team|community manager|cm)\b')
+                THEN 'developer reply'
+                ELSE 'review or another comment' END AS likely_target
+    FROM comments c
+    WHERE (c.cand_ai_written OR c.cand_bot) AND NOT c.excluded_hit
+)
+SELECT a.likely_target,
+       g.game,
+       CASE WHEN r.voted_up THEN 'praise' ELSE 'critique' END AS review_type,
+       a.comment_text                   AS callout_comment,
+       left(r.review, 300)              AS review,
+       left(r.developer_response, 300)  AS developer_reply,
+       a.commented_at::DATE             AS comment_date,
+       r.dev_replied_at < a.commented_at AS dev_replied_before_callout,
+       a.cand_ai_written                AS says_ai_written,
+       a.cand_bot                       AS says_bot
+FROM ai_callouts a
+JOIN reviews r USING (appid, recommendationid)
+JOIN games g   USING (appid)
+ORDER BY a.likely_target DESC, a.commented_at DESC;
+
+
 -- Q11. Save any result as a CSV you can open in Google Sheets (example: Q8's comments)
 -- COPY (SELECT ... ) TO 'G:/My Drive/steam_reviews/exports/flagged_comments.csv' (HEADER);
