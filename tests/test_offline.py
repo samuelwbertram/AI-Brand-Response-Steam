@@ -159,6 +159,16 @@ def main():
     sample.main()   # second pass must not repeat comments
     again = pd.read_parquet(f"{TMP}/state/callout_sampled.parquet")
     assert again.comment_id.is_unique
+    # overview sheet
+    from collector import overview
+    overview.main()
+    ov = pd.read_csv(__import__("glob").glob(f"{TMP}/overview/*.csv")[0])
+    print(ov[["game", "panel_group", "reviews_collected", "dev_reply_rate",
+              "comments_collected", "flagged_callouts"]])
+    assert ov.comments_collected.sum() == len(com)
+    overview.main()   # same files again must not double-count
+    ov2 = pd.read_csv(__import__("glob").glob(f"{TMP}/overview/*.csv")[0])
+    assert ov2.comments_collected.sum() == len(com)
     print("ALL OFFLINE CHECKS PASSED")
     shutil.rmtree(TMP)
 

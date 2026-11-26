@@ -96,13 +96,14 @@ jobs:
         run: |
           if [ -z "$NO_DRIVE" ]; then
             ( while sleep 600; do
-                rclone copy data steamdrive: --transfers 4 --exclude "*.tmp" --exclude "callout_review/**" > /dev/null 2>&1 || true
+                rclone copy data steamdrive: --transfers 4 --exclude "*.tmp" --exclude "callout_review/**" --exclude "overview/**" > /dev/null 2>&1 || true
               done ) &
             SYNC_PID=$!
           fi
           STATUS=0
           python -m collector.run "$MODE" || STATUS=$?
-          if [ "$MODE" != "smoke" ]; then python -m collector.sample || echo "::warning::call-out sample failed"; fi
+          if [ "$MODE" != "smoke" ]; then python -m collector.sample || echo "::warning::call-out sample failed"
+            python -m collector.overview || echo "::warning::overview sheet failed"; fi
           if [ -n "$SYNC_PID" ]; then kill "$SYNC_PID" 2>/dev/null || true; fi
           exit $STATUS
 
@@ -110,11 +111,11 @@ jobs:
         if: always()
         run: |
           if [ -d data ] && [ -z "$NO_DRIVE" ]; then
-            rclone copy data steamdrive: --transfers 4 --exclude "*.tmp" --exclude "callout_review/**"
+            rclone copy data steamdrive: --transfers 4 --exclude "*.tmp" --exclude "callout_review/**" --exclude "overview/**"
             # the call-out sample becomes a Google Sheet you can fill in on your phone
-            if [ -d data/callout_review ]; then
-              rclone copy data/callout_review steamdrive:callout_review --drive-import-formats csv
-            fi
+            for d in callout_review overview; do
+              if [ -d "data/$d" ]; then rclone copy "data/$d" "steamdrive:$d" --drive-import-formats csv; fi
+            done
           fi
 
       - name: Keep run log on GitHub too

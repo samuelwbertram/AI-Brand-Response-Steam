@@ -33,6 +33,9 @@ Same design principles, separate code and separate Drive folder.
    (spread across call-out types) and 10 random unflagged ones, each with the review it sits under.
    Fill in `is_callout`, `callout_type` and `notes`; the answers are used to tune `detect.py`.
 
+6. **Overview sheet:** a Google Sheet in `overview/` with one row per panel game (reviews,
+   developer reply rate, comments, flagged call-outs, AI disclosure), covering all data so far.
+
 A backup run at 16:23 Melbourne starts only if no run went in the previous 13 hours
 (GitHub sometimes drops scheduled runs).
 
@@ -56,10 +59,16 @@ disappeared/    reviews that vanished in a complete re-sweep
 comments/date=/ new comments + call-out candidate flags
 runs/           one JSON log per run (calls, counts, errors)
 callout_review/ daily call-out review sheets (Google Sheets) for hand checks
+overview/       daily one-row-per-game overview (Google Sheets)
 smoke/          smoke-test reports
 ```
 
 Raw Steam IDs exist only in `state/latest/` on Drive (needed to fetch threads), never in this repo.
+
+## Querying the data with SQL
+
+See [sql/README.md](sql/README.md): DuckDB reads the Drive files directly, with ready-made
+views and starter queries.
 
 ## Tests
 
