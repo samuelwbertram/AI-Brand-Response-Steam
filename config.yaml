@@ -1,0 +1,42 @@
+# AI Brand Response – Steam collector settings.
+# Change values here, not in the code.
+# The contact address for the User-Agent comes from the CONTACT_EMAIL repo variable.
+
+drive:
+  # The steam_reviews folder at the top of Sam's My Drive (NOT youtube_factcheck).
+  root_folder_id: "1LW3ZNsVlJk8ElAaZUfv3nBwuYAYJeoTe"
+
+time_budget_minutes: 300        # stop collecting after 5 h; GitHub kills jobs at 6 h
+api_time_share: 0.5             # share of the time budget for the reviews API; the rest goes to threads
+incremental_window_days: 14     # daily pull re-reads the last 14 days (early replies, daily vote counts)
+backfill_calls_per_game_per_run: 1500   # stops one huge game eating the whole backfill
+
+api:                            # api.steampowered.com (official reviews endpoint)
+  seconds_between_calls: 1.0
+  page_size: 100
+  max_retries: 5
+  backfill_start: "2022-01-01"  # earliest review date in the backfill
+  languages: ["all"]
+
+community:                      # steamcommunity.com comment threads (HTML, grey area)
+  seconds_between_calls: 3.0
+  stop_on_first_429: true       # back off for the day; never rotate IPs
+  comments_per_call: 100
+
+screening:
+  reviews_per_game: 500         # 5 calls per candidate
+  reply_rate_cutoff: 0.01       # games at or above this join the panel
+  random_keep_share: 0.10       # share of below-cutoff games kept for base rates
+  min_total_reviews: 500
+  rescreen_every_days: 30
+
+resweep:
+  window_days: 90               # re-pull recent reviews to catch late developer replies
+  every_days: 7                 # each game re-swept once a week, staggered by appid
+
+threads:
+  # Priority 1: reviews with a developer reply and >=1 comment
+  # Priority 2: random share of commented reviews without a reply (silent-brand comparison)
+  # Priority 3: everything else with comments, only if time is left
+  no_reply_sample_share: 0.10
+  recheck_every_days: 7         # re-scrape known threads for new call-outs
