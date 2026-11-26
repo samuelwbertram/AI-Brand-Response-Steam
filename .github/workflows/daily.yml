@@ -40,6 +40,13 @@ jobs:
         env:
           RCLONE_DRIVE_TOKEN: ${{ secrets.RCLONE_DRIVE_TOKEN }}
         run: |
+          if [ -z "$RCLONE_DRIVE_TOKEN" ]; then
+            if [ "$MODE" = "smoke" ]; then
+              echo "::warning::No RCLONE_DRIVE_TOKEN yet - smoke test runs without Drive (result is in the log)"
+              echo "NO_DRIVE=1" >> "$GITHUB_ENV"; exit 0
+            fi
+            echo "::error::Add the RCLONE_DRIVE_TOKEN secret before daily runs - see TUTORIAL.md, step 3"; exit 1
+          fi
           FOLDER_ID=$(python -c "import yaml;print(yaml.safe_load(open('config.yaml'))['drive']['root_folder_id'])")
           mkdir -p ~/.config/rclone
           {
@@ -53,7 +60,7 @@ jobs:
             || { echo "::error::rclone can't open the steam_reviews folder - see TUTORIAL.md, step 3"; exit 1; }
 
       - name: Download state from Drive
-        run: rclone copy steamdrive:state data/state --create-empty-src-dirs || true
+        run: if [ -z "$NO_DRIVE" ]; then rclone copy steamdrive:state data/state --create-empty-src-dirs || true; fi
 
       - name: Run collector
         run: python -m collector.run "$MODE"
@@ -61,7 +68,7 @@ jobs:
       - name: Upload results to Drive
         if: always()
         run: |
-          if [ -d data ]; then rclone copy data steamdrive: --transfers 4; fi
+          if [ -d data ] && [ -z "$NO_DRIVE" ]; then rclone copy data steamdrive: --transfers 4; fi
 
       - name: Keep run log on GitHub too
         if: always()
