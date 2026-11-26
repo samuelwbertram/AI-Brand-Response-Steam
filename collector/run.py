@@ -295,6 +295,7 @@ class AppState:
         df = read_parquet(self.path)
         self.rows = {} if df is None else {r["recommendationid"]: r for r in df.to_dict("records")}
         self.versions, self.metrics, self.gone = [], [], []
+        self.dev_reply_versions = 0
 
     def ingest(self, raw_reviews, cfg):
         seen = []
@@ -309,6 +310,7 @@ class AppState:
                 v.update({"snapshot_date": TODAY, "run_id": RUN_ID,
                           "change": "new" if prev is None else "changed"})
                 self.versions.append(v)
+                self.dev_reply_versions += 1 if row["developer_response"] else 0
             if (row["comment_count"] or 0) > 0 or row["developer_response"]:
                 self.metrics.append({
                     "appid": self.appid, "recommendationid": rid, "snapshot_date": TODAY,
@@ -372,6 +374,29 @@ def pull_range(cfg, api, st, start, end, budget, max_calls=None, cursor="*"):
     return False, cursor, seen, calls
 
 
+def panel_summary(games):
+    """Small numbers for the run log, so a run can be judged without opening the data."""
+    try:
+        g = games[games["screened_date"].notna()]
+        p = g[g["in_panel"].fillna(False)]
+        resp = p[p["stratum"] == "responsive"]
+        top = resp.sort_values("screen_reply_rate", ascending=False).head(10)
+        return {
+            "screened": int(len(g)), "panel": int(len(p)),
+            "responsive": int(len(resp)), "base_rate_sample": int(len(p) - len(resp)),
+            "ai_disclosed_screened": int((g["ai_disclosed"] == True).sum()),   # noqa: E712
+            "ai_disclosed_panel": int((p["ai_disclosed"] == True).sum()),      # noqa: E712
+            "dev_replies_seen_in_screening": int(g["screen_dev_replies"].fillna(0).sum()),
+            "median_reply_rate_responsive": round(float(resp["screen_reply_rate"].median()), 4)
+            if len(resp) else None,
+            "top_reply_rates": [
+                {"appid": int(r["appid"]), "name": r.get("name"),
+                 "rate": round(float(r["screen_reply_rate"]), 3)} for r in top.to_dict("records")],
+        }
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 def collect_reviews(cfg, api, games, budget, log):
     progress_path = STATE / "progress.json"
     prog = json.loads(progress_path.read_text()) if progress_path.exists() else {}
@@ -429,8 +454,11 @@ def collect_reviews(cfg, api, games, budget, log):
             counts["versions"] += v
             counts["metric_rows"] += m
             counts["disappeared"] += g
+            counts["versions_with_dev_reply"] = counts.get("versions_with_dev_reply", 0) + \
+                st.dev_reply_versions
             progress_path.write_text(json.dumps(prog, indent=1))
     log["reviews"] = counts
+    log["panel_summary"] = panel_summary(games)
     log["backfill_remaining"] = [a for a in panel if not prog.get(str(a), {}).get("backfill_done")]
 
 
@@ -461,7 +489,7 @@ def collect_threads(cfg, com, games, budget, log):
     method = (json.loads((STATE / "progress.json").read_text()).get("_thread_method")
               if (STATE / "progress.json").exists() else None)
     new_rows, updates = [], {}
-    tot = {"scraped": 0, "new_comments": 0, "candidates": 0, "parts": 0}
+    tot = {"scraped": 0, "new_comments": 0, "candidates": 0, "parts": 0, "unavailable": 0}
 
     def flush():
         for appid, recs in updates.items():
@@ -490,9 +518,13 @@ def collect_threads(cfg, com, games, budget, log):
                 rows, total, method = community.fetch_thread(
                     com, appid, sid, rid, cfg["community"]["comments_per_call"], method)
             except ValueError as e:
-                log["errors"].append(f"thread {rid}: {e}")
+                tot["unavailable"] += 1
+                if tot["unavailable"] <= 5:
+                    log["errors"].append(f"thread {rid}: {e}")
+                updates.setdefault(appid, {})[rid] = cc   # retry at the weekly re-check only
                 continue
             tot["scraped"] += 1
+            tot[f"priority_{prio}"] = tot.get(f"priority_{prio}", 0) + 1
             for row in rows:
                 if row["comment_id"] in seen:
                     continue
@@ -512,7 +544,9 @@ def collect_threads(cfg, com, games, budget, log):
         prog["_thread_method"] = method
         pp.write_text(json.dumps(prog, indent=1))
     log["threads"] = {"scraped": tot["scraped"], "new_comments": tot["new_comments"],
-                      "candidate_callouts": tot["candidates"], "method": method}
+                      "candidate_callouts": tot["candidates"], "unavailable": tot["unavailable"],
+                      "by_priority": {k[9:]: v for k, v in tot.items() if k.startswith("priority_")},
+                      "method": method}
 
 
 # ---------------------------------------------------------------- main
