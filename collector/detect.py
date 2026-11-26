@@ -53,10 +53,10 @@ TARGETS = [
     # the developer's reply (brands' replies get called AI too - a separate arm)
     ("developer_reply", [
         r"\b(dev|devs|developers?|publisher|studio|pr|community manager|cm|support( team)?)\b.{0,40}"
-        r"\b(response|reply|replies|message|answer|copy[- ]?paste|cut[- ]and[- ]paste|canned|template|bot|ai|chat ?gpt)\b",
+        r"\b(responses?|reply|replies|messages?|answers?|copy[- ]?paste|cut[- ]and[- ]paste|canned|template|bot|ai|chat ?gpt)\b",
         r"\b(ai|chat ?gpt|bot|canned|generic|copy[- ]?paste[d]?|cut[- ]and[- ]paste[d]?|template[d]?)\b.{0,30}"
-        r"\b(response|reply|replies|message|answer)\b",
-        r"\b(response|reply|message)\b.{0,30}\b(written|generated|made) (by|with) (ai|chat ?gpt|a bot)\b",
+        r"\b(responses?|reply|replies|messages?|answers?)\b",
+        r"\b(responses?|reply|replies|messages?)\b.{0,30}\b(written|generated|made) (by|with) (ai|chat ?gpt|a bot)\b",
     ]),
     # another user's review or comment - the focus of the paper
     ("review_or_comment", [
