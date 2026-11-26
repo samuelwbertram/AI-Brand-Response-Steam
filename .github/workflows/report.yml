@@ -35,6 +35,7 @@ jobs:
         env:
           RCLONE_DRIVE_TOKEN: ${{ secrets.RCLONE_DRIVE_TOKEN }}
         run: |
+          echo "Drive token present: $([ -n "$RCLONE_DRIVE_TOKEN" ] && echo yes || echo no) (${#RCLONE_DRIVE_TOKEN} chars)"
           FOLDER_ID=$(python -c "import yaml;print(yaml.safe_load(open('config.yaml'))['drive']['root_folder_id'])")
           mkdir -p ~/.config/rclone
           {
