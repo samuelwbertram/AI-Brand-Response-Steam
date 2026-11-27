@@ -48,14 +48,9 @@ Community host) run side by side. Each keeps its own fixed pace (1 call a second
 every 3 seconds); the thread worker stops for the day at the first rate-limit reply.
 Discovery has no practical cap: every game with 500+ reviews becomes a candidate.
 
-A second full run starts at about 11:00 Melbourne (10:57), after the 04:23 run has finished.
-Runs never overlap: a run that starts while another is going waits for it.
-
-A backup run at 16:23 Melbourne starts only if no run went in the previous 13 hours
-(GitHub sometimes drops scheduled runs).
-
-Each review is stored only when it is new or changed, so the data is a version history.
-Votes are stored daily for reviews with comments or a developer reply.
+GitHub often starts scheduled runs hours late or not at all, so the workflow has a start
+slot every 2 hours. A slot does a run only if no real run started in the last 11 hours,
+which gives two runs a day. Runs never overlap. Runs started by hand always go.
 
 ## Politeness
 

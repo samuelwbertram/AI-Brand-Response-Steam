@@ -2,9 +2,10 @@ name: Steam reviews – daily collect
 
 on:
   schedule:
-    - cron: "23 17 * * *"   # main run: 04:23 Melbourne (AEDT) / 03:23 (AEST), quiet hours for Steam
-    - cron: "57 23 * * *"   # second full run: 10:57 Melbourne (AEDT) / 09:57 (AEST); just before the hour, when GitHub is less congested
-    - cron: "23 5 * * *"    # backup: 16:23 Melbourne (AEDT); skips itself if a run already went in the last 13 h
+    # GitHub often starts scheduled runs hours late or not at all, so there is a start slot
+    # every 2 hours. A slot only does a run if no real run started in the last 11 hours,
+    # which gives two runs a day whichever slots GitHub honours.
+    - cron: "17 */2 * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -14,16 +15,12 @@ on:
         type: choice
         options: [smoke, screen, daily]
 
-concurrency:
-  group: steam-collector          # never run two collectors at once (one IP, one pace)
-  cancel-in-progress: false
-
 permissions:
   contents: read
-  actions: read                   # lets the backup slot see whether today's run already happened
+  actions: read                   # lets a start slot see whether a run already happened
 
 jobs:
-  guard:                          # the backup slot runs only if nothing ran in the last 13 hours
+  guard:                          # scheduled slots run only if no real run started in the last 11 hours
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.check.outputs.go }}
@@ -32,15 +29,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" != "schedule" ] || [ "${{ github.event.schedule }}" != "23 5 * * *" ]; then
-            echo "go=1" >> "$GITHUB_OUTPUT"; exit 0
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "go=1" >> "$GITHUB_OUTPUT"; exit 0      # runs started by hand always go
           fi
-          SINCE=$(date -u -d '13 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          N=$(gh api "repos/${{ github.repository }}/actions/workflows/daily.yml/runs?created=%3E%3D${SINCE}&per_page=50" \
-                --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }}) | select(.conclusion == "success" or .status == "in_progress" or .status == "queued" or .status == "waiting")] | length')
-          echo "Other runs since ${SINCE}: ${N}"
+          SINCE=$(date -u -d '11 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          # A real run is one that worked for 10+ minutes, or is still going after 2 minutes,
+          # or was started by hand and is still going. Slots that skipped (a few seconds) don't count.
+          N=$(gh api "repos/${{ github.repository }}/actions/workflows/daily.yml/runs?created=%3E%3D${SINCE}&per_page=100" \
+                --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }}) | select(
+                        (.status == "completed" and ((.updated_at | fromdate) - (.run_started_at | fromdate)) > 600)
+                        or (.status != "completed" and ((now - (.run_started_at | fromdate)) > 120 or .event == "workflow_dispatch"))
+                      )] | length')
+          echo "Real runs since ${SINCE}: ${N}"
           if [ "${N:-0}" -gt 0 ]; then
-            echo "::notice::Backup slot skipped - a run already went in the last 13 hours"
+            echo "::notice::Slot skipped - a run already started in the last 11 hours"
             echo "go=0" >> "$GITHUB_OUTPUT"
           else
             echo "go=1" >> "$GITHUB_OUTPUT"
@@ -51,6 +53,9 @@ jobs:
     if: needs.guard.outputs.go == '1'
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    concurrency:
+      group: steam-collector      # never run two collectors at once (one IP, one pace)
+      cancel-in-progress: false
     env:
       CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
       MODE: ${{ github.event.inputs.mode || 'daily' }}

@@ -17,6 +17,7 @@ class PoliteClient:
         self._last = 0.0
         self.calls = 0
         self.errors = 0
+        self.error_kinds = {}     # e.g. {"429": 3, "ConnectionError": 1}
         contact = os.environ.get("CONTACT_EMAIL", "contact-not-set")
         self.session = requests.Session()
         self.session.headers["User-Agent"] = (
@@ -27,6 +28,10 @@ class PoliteClient:
         self.session.cookies.set("birthtime", "631152001", domain=".steampowered.com")
         self.session.cookies.set("wants_mature_content", "1", domain=".steampowered.com")
         self.session.cookies.set("mature_content", "1", domain=".steamcommunity.com")
+
+    def _err(self, kind):
+        self.errors += 1
+        self.error_kinds[str(kind)] = self.error_kinds.get(str(kind), 0) + 1
 
     def _wait(self):
         delay = self.gap - (time.monotonic() - self._last)
@@ -48,20 +53,20 @@ class PoliteClient:
             self.calls += 1
             try:
                 r = self.session.request(method, url, **kwargs)
-            except requests.RequestException:
-                self.errors += 1
+            except requests.RequestException as e:
+                self._err(type(e).__name__)
                 time.sleep(backoff)
                 backoff *= 2
                 continue
             if r.status_code == 429 or r.status_code == 403:
-                self.errors += 1
+                self._err(r.status_code)
                 if self.stop_on_429:
                     raise RateLimited(f"{r.status_code} from {url.split('?')[0]}")
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 600)
                 continue
             if r.status_code >= 500:
-                self.errors += 1
+                self._err(r.status_code)
                 time.sleep(backoff)
                 backoff *= 2
                 continue

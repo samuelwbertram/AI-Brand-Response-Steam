@@ -672,6 +672,7 @@ def daily(cfg, force_screen=False):
             collect_threads(cfg, com, games, budget, log)
         log["parallel"] = parallel
     finally:
+        log["error_kinds"] = {"api": api.error_kinds, "community": com.error_kinds}
         log["calls"] = {"api": api.calls, "api_errors": api.errors,
                         "community": com.calls, "community_errors": com.errors}
         log["minutes"] = round((time.time() - t0) / 60, 1)
