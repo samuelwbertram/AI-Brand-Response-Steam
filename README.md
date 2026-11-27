@@ -43,6 +43,9 @@ of the time left after screening.
 6. **Overview sheet:** a Google Sheet in `overview/` with one row per panel game (reviews,
    developer reply rate, comments, flagged call-outs, AI disclosure), covering all data so far.
 
+A second full run starts at about 11:00 Melbourne (10:57), after the 04:23 run has finished.
+Runs never overlap: a run that starts while another is going waits for it.
+
 A backup run at 16:23 Melbourne starts only if no run went in the previous 13 hours
 (GitHub sometimes drops scheduled runs).
 

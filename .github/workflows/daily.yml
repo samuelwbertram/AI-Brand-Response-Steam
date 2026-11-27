@@ -3,6 +3,7 @@ name: Steam reviews – daily collect
 on:
   schedule:
     - cron: "23 17 * * *"   # main run: 04:23 Melbourne (AEDT) / 03:23 (AEST), quiet hours for Steam
+    - cron: "57 23 * * *"   # second full run: 10:57 Melbourne (AEDT) / 09:57 (AEST); just before the hour, when GitHub is less congested
     - cron: "23 5 * * *"    # backup: 16:23 Melbourne (AEDT); skips itself if a run already went in the last 13 h
   workflow_dispatch:
     inputs:
