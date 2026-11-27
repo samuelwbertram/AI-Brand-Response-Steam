@@ -75,6 +75,16 @@ def main():
             LEFT JOIN games g USING (appid)
             GROUP BY ALL HAVING text_missing > 0 ORDER BY text_missing DESC""").fetchdf()
         chk.to_csv(outdir / "Q00 Data check - reviews with missing text.csv", index=False)
+        if len(chk):   # hand the list to the collector, which re-saves them (state/repair_missing)
+            miss = con.execute(f"""
+                SELECT regexp_extract(filename, 'app=(\\d+)', 1)::BIGINT AS appid,
+                       recommendationid::VARCHAR AS recommendationid
+                FROM read_parquet('{str(DATA).replace(chr(92), "/")}/state/latest/app=*.parquet',
+                                  filename = true, union_by_name = true)
+                WHERE recommendationid::VARCHAR NOT IN
+                      (SELECT DISTINCT recommendationid::VARCHAR FROM reviews)""").fetchdf()
+            (DATA / "repair").mkdir(exist_ok=True)
+            miss.to_parquet(DATA / "repair" / "repair_missing.parquet", index=False)
         print(f"DATA CHECK: {int(chk.text_missing.sum()) if len(chk) else 0} reviews missing text "
               f"in {len(chk)} games")
         print(chk.head(15).to_string())

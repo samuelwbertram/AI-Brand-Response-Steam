@@ -425,6 +425,24 @@ def collect_reviews(cfg, api, games, budget, log, parallel=False):
                    .replace(tzinfo=dt.timezone.utc).timestamp())
     t_now = now_ts()
 
+    # One-off repairs: reviews whose text is missing from reviews/ (listed by the report's data
+    # check) get their stored hash cleared, so the next pull that sees them saves them again.
+    repair_path = STATE / "repair_missing.parquet"
+    rep = read_parquet(repair_path)
+    if rep is not None and len(rep):
+        n_fix = 0
+        for appid, grp in rep.groupby("appid"):
+            with STATE_LOCK:
+                st = AppState(int(appid))
+                keys = {str(k): k for k in st.rows}
+                for rid in grp["recommendationid"].astype(str):
+                    if rid in keys:
+                        st.rows[keys[rid]]["content_hash"] = None
+                        n_fix += 1
+                st.save()
+        os.replace(repair_path, STATE / f"repair_done_{RUN_ID}.parquet")
+        log["notes"].append(f"repair: {n_fix} reviews queued to be saved again")
+
     # Three passes so every game gets its cheap daily update before any backfill.
     for phase in ("incremental", "resweep", "backfill"):
         for appid in panel:

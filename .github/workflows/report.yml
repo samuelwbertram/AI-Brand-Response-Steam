@@ -64,3 +64,4 @@ jobs:
         run: |
           rclone copy data/reports steamdrive:reports --drive-import-formats csv --drive-export-formats csv
           rclone copy data/overview steamdrive:overview --drive-import-formats csv --drive-export-formats csv
+          if [ -f data/repair/repair_missing.parquet ]; then rclone copy data/repair steamdrive:state; fi
