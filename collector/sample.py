@@ -27,7 +27,9 @@ from . import detect
 from .run import DATA, STATE, TODAY, RUN_ID, load_cfg, read_parquet, save_parquet
 
 REMOTE = os.environ.get("RCLONE_REMOTE", "steamdrive:")
-LABEL = dt.datetime.now(ZoneInfo("Australia/Melbourne")).date().isoformat()  # Melbourne date for names
+# Melbourne date and time for names: one sheet per run, so a later run the same day
+# never overwrites a sheet that is being filled in
+LABEL = dt.datetime.now(ZoneInfo("Australia/Melbourne")).strftime("%Y-%m-%d_%H%M")
 FAMILIES = ["ai_written", "bot", "paid_shill", "fake", "no_experience"]
 
 
