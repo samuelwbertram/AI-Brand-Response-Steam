@@ -34,10 +34,10 @@ def parse_results(html):
     return rows
 
 
-def discover(client, target, min_reviews, max_pages=400, known=()):
+def discover(client, target, min_reviews, max_pages=400, known=(), max_dry_pages=15):
     """Page through the store search until `target` games with enough reviews are found."""
     found, seen, dry_pages, page = [], set(known), 0, 0
-    while len(found) + len(known) < target and page < max_pages and dry_pages < 15:
+    while len(found) + len(known) < target and page < max_pages and dry_pages < max_dry_pages:
         r = client.get(SEARCH, params={
             "query": "", "start": page * 100, "count": 100, "category1": 998,
             "infinite": 1, "l": "english", "cc": "us"})

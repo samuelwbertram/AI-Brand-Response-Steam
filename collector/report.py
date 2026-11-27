@@ -60,6 +60,26 @@ def main():
         except Exception as e:
             summary.append({"query": name, "rows": 0, "error": str(e)[:300]})
             print(f"{name}: ERROR {e}")
+    # data check: every review the collector knows about should have its text stored
+    try:
+        chk = con.execute(f"""
+            WITH known AS (
+                SELECT regexp_extract(filename, 'app=(\\d+)', 1)::BIGINT AS appid,
+                       recommendationid::VARCHAR AS recommendationid
+                FROM read_parquet('{str(DATA).replace(chr(92), "/")}/state/latest/app=*.parquet',
+                                  filename = true, union_by_name = true)
+            ), stored AS (SELECT DISTINCT recommendationid::VARCHAR AS recommendationid FROM reviews)
+            SELECT g.game, k.appid, count(*) AS reviews_known,
+                   count(*) FILTER (WHERE s.recommendationid IS NULL) AS text_missing
+            FROM known k LEFT JOIN stored s USING (recommendationid)
+            LEFT JOIN games g USING (appid)
+            GROUP BY ALL HAVING text_missing > 0 ORDER BY text_missing DESC""").fetchdf()
+        chk.to_csv(outdir / "Q00 Data check - reviews with missing text.csv", index=False)
+        print(f"DATA CHECK: {int(chk.text_missing.sum()) if len(chk) else 0} reviews missing text "
+              f"in {len(chk)} games")
+        print(chk.head(15).to_string())
+    except Exception as e:
+        print(f"DATA CHECK ERROR {e}")
     (outdir / "Q00 Index of results.csv").write_text(
         "query,rows,error\n" + "".join(
             f"\"{s['query']}\",{s['rows']},\"{s['error'].replace(chr(34), chr(39))}\"\n"

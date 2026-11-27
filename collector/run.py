@@ -8,6 +8,8 @@ Modes
 Data lives in ./data, which the workflow syncs with the steam_reviews Drive folder.
 """
 import argparse
+import itertools
+import threading
 import datetime as dt
 import hashlib
 import json
@@ -64,6 +66,15 @@ def read_parquet(path, columns=None):
     if Path(path).exists():
         return pd.read_parquet(path, columns=columns)
     return None
+
+
+# The reviews worker and the comment-thread worker run side by side (different Steam hosts,
+# each at its own unchanged pace). Both touch state/latest/app=*.parquet, so:
+#   STATE_LOCK guards loading and saving those files;
+#   BUSY holds the game the reviews worker has in memory, which the thread worker leaves alone.
+STATE_LOCK = threading.RLock()
+BUSY = set()
+_PART = itertools.count(1)       # numbers output files so one run never overwrites its own
 
 
 class Budget:
@@ -182,7 +193,9 @@ def run_discovery(cfg, api, log):
     try:
         known = [] if old is None else old["appid"].astype(int).tolist()
         found, pages = discover.discover(api, dc["target_candidates"],
-                                         cfg["screening"]["min_total_reviews"], known=known)
+                                         cfg["screening"]["min_total_reviews"], known=known,
+                                         max_pages=dc.get("max_pages", 400),
+                                         max_dry_pages=dc.get("max_dry_pages", 15))
     except Exception as e:
         log["errors"].append(f"discovery: {type(e).__name__}: {e}")
         return
@@ -349,7 +362,7 @@ class AppState:
                 if c not in df:
                     df[c] = None
             save_parquet(df[self.COLS], self.path)
-        tag = f"app={self.appid}-{RUN_ID}.parquet"
+        tag = f"app={self.appid}-{RUN_ID}-{next(_PART):05d}.parquet"
         write_parquet(pd.DataFrame(self.versions), f"reviews/date={TODAY}/{tag}")
         write_parquet(pd.DataFrame(self.metrics), f"metrics/date={TODAY}/{tag}")
         write_parquet(pd.DataFrame(self.gone), f"disappeared/date={TODAY}/{tag}")
@@ -397,12 +410,15 @@ def panel_summary(games):
         return {"error": f"{type(e).__name__}: {e}"}
 
 
-def collect_reviews(cfg, api, games, budget, log):
+def collect_reviews(cfg, api, games, budget, log, parallel=False):
     progress_path = STATE / "progress.json"
     prog = json.loads(progress_path.read_text()) if progress_path.exists() else {}
     panel = games[games["in_panel"].fillna(False)]["appid"].astype(int).tolist()
     day_index = dt.date.fromisoformat(TODAY).toordinal()
-    api_deadline = Budget(budget.left() / 60 * cfg.get("api_time_share", 0.5))
+    if parallel:   # whole run, ending 20 min early so it is done before the last thread save
+        api_deadline = Budget(max(0, budget.left() / 60 - 20))
+    else:
+        api_deadline = Budget(budget.left() / 60 * cfg.get("api_time_share", 0.5))
     counts = {"incremental_calls": 0, "resweep_calls": 0, "backfill_calls": 0,
               "versions": 0, "metric_rows": 0, "disappeared": 0}
     bf_start = int(dt.datetime.fromisoformat(cfg["api"]["backfill_start"])
@@ -416,7 +432,10 @@ def collect_reviews(cfg, api, games, budget, log):
                 log["notes"].append(f"API time share used up during {phase}")
                 break
             p = prog.setdefault(str(appid), {})
-            st = AppState(appid)
+            with STATE_LOCK:
+                BUSY.clear()
+                BUSY.add(appid)
+                st = AppState(appid)
             try:
                 if phase == "incremental":
                     start = t_now - cfg.get("incremental_window_days", 14) * 86400
@@ -457,6 +476,8 @@ def collect_reviews(cfg, api, games, budget, log):
             counts["versions_with_dev_reply"] = counts.get("versions_with_dev_reply", 0) + \
                 st.dev_reply_versions
             progress_path.write_text(json.dumps(prog, indent=1))
+    with STATE_LOCK:
+        BUSY.clear()
     log["reviews"] = counts
     log["panel_summary"] = panel_summary(games)
     log["backfill_remaining"] = [a for a in panel if not prog.get(str(a), {}).get("backfill_done")]
@@ -499,7 +520,7 @@ def order_thread_queue(queue, no_reply_share):
     return mixed + rechecks + rest
 
 
-def collect_threads(cfg, com, games, budget, log):
+def collect_threads(cfg, com, games, budget, log, wait_for=None):
     panel = games[games["in_panel"].fillna(False)]["appid"].astype(int).tolist()
     recheck = cfg["threads"]["recheck_every_days"]
     queue = []
@@ -527,13 +548,16 @@ def collect_threads(cfg, com, games, budget, log):
     tot = {"scraped": 0, "new_comments": 0, "candidates": 0, "parts": 0, "unavailable": 0}
 
     def flush():
-        for appid, recs in updates.items():
-            st = AppState(appid)
-            for rid, cc in recs.items():
-                if rid in st.rows:
-                    st.rows[rid]["thread_scraped_date"] = TODAY
-                    st.rows[rid]["thread_comment_count"] = cc
-            st.save()
+        for appid in list(updates):
+            with STATE_LOCK:
+                if appid in BUSY:      # the reviews worker has this game open; next flush
+                    continue
+                st = AppState(appid)
+                for rid, cc in updates.pop(appid).items():
+                    if rid in st.rows:
+                        st.rows[rid]["thread_scraped_date"] = TODAY
+                        st.rows[rid]["thread_comment_count"] = cc
+                st.save()
         if new_rows:
             tot["parts"] += 1
             write_parquet(pd.DataFrame(new_rows),
@@ -542,7 +566,6 @@ def collect_threads(cfg, com, games, budget, log):
             tot["candidates"] += int(sum(r["any_candidate"] for r in new_rows))
         save_parquet(pd.DataFrame({"comment_id": sorted(seen)}), seen_path)
         new_rows.clear()
-        updates.clear()
 
     try:
         for prio, _, appid, rid, sid, cc in queue:
@@ -573,6 +596,9 @@ def collect_threads(cfg, com, games, budget, log):
     except RateLimited as e:
         log["notes"].append(f"community rate-limited after {tot['scraped']} threads: {e}")
     flush()
+    if wait_for is not None:       # reviews worker done -> no game is busy -> save the rest
+        wait_for.join()
+        flush()
     if method:
         pp = STATE / "progress.json"
         prog = json.loads(pp.read_text()) if pp.exists() else {}
@@ -600,13 +626,33 @@ def daily(cfg, force_screen=False):
             games["screened_date"].isna().any() or any(
             (dt.date.fromisoformat(TODAY) - dt.date.fromisoformat(d)).days
             >= cfg["screening"]["rescreen_every_days"] for d in games["screened_date"].dropna())
-        run_discovery(cfg, api, log)
-        new_cands = games is None or not set(
-            load_candidates()["appid"]).issubset(set(games["appid"]))
-        if due or new_cands:
-            games = screen(cfg, api, budget, log)
-        collect_reviews(cfg, api, games, budget, log)
-        collect_threads(cfg, com, games, budget, log)
+        parallel = bool(cfg.get("parallel", True)) and games is not None
+
+        def api_side(g):
+            """Store/API host: discovery, screening, then reviews."""
+            try:
+                run_discovery(cfg, api, log)
+                new_cands = g is None or not set(
+                    load_candidates()["appid"]).issubset(set(g["appid"]))
+                if due or new_cands:
+                    g = screen(cfg, api, budget, log)
+                collect_reviews(cfg, api, g, budget, log, parallel=parallel)
+            except Exception as e:
+                log["errors"].append(f"api side: {type(e).__name__}: {e}")
+            return g
+
+        if parallel:
+            # Community host: comment threads for the panel as it stood at the start.
+            worker = threading.Thread(target=api_side, args=(games,), name="api-side")
+            worker.start()
+            try:
+                collect_threads(cfg, com, games, budget, log, wait_for=worker)
+            finally:
+                worker.join()
+        else:
+            games = api_side(games)
+            collect_threads(cfg, com, games, budget, log)
+        log["parallel"] = parallel
     finally:
         log["calls"] = {"api": api.calls, "api_errors": api.errors,
                         "community": com.calls, "community_errors": com.errors}

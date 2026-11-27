@@ -43,6 +43,11 @@ of the time left after screening.
 6. **Overview sheet:** a Google Sheet in `overview/` with one row per panel game (reviews,
    developer reply rate, comments, flagged call-outs, AI disclosure), covering all data so far.
 
+Within a run, the reviews worker (Steam's API host) and the comment-thread worker (Steam
+Community host) run side by side. Each keeps its own fixed pace (1 call a second and 1 page
+every 3 seconds); the thread worker stops for the day at the first rate-limit reply.
+Discovery has no practical cap: every game with 500+ reviews becomes a candidate.
+
 A second full run starts at about 11:00 Melbourne (10:57), after the 04:23 run has finished.
 Runs never overlap: a run that starts while another is going waits for it.
 

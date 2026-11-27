@@ -7,7 +7,9 @@ drive:
   root_folder_id: "1LW3ZNsVlJk8ElAaZUfv3nBwuYAYJeoTe"
 
 time_budget_minutes: 300        # stop collecting after 5 h; GitHub kills jobs at 6 h
-api_time_share: 0.3             # share of the time left after screening for the reviews API; the rest (70%) goes to comment threads
+parallel: true                  # reviews (API host) and comment threads (community host) run side by side,
+                                # each at its own unchanged pace below; set false to go back to one after the other
+api_time_share: 0.3             # only used when parallel is false
 incremental_window_days: 14     # daily pull re-reads the last 14 days (early replies, daily vote counts)
 backfill_calls_per_game_per_run: 1500   # stops one huge game eating the whole backfill
 
@@ -24,7 +26,9 @@ community:                      # steamcommunity.com comment threads (HTML, grey
   comments_per_call: 100
 
 discovery:                      # finds candidate games from Steam's store search, popular first
-  target_candidates: 2000       # raise this to grow the panel (e.g. 5000, 10000)
+  target_candidates: 100000     # no practical cap: every game with min_total_reviews or more
+  max_pages: 1500               # store search pages to read (100 games each)
+  max_dry_pages: 40             # stop after this many pages in a row with no qualifying game
   refresh_every_days: 30        # look for newly popular games monthly
 
 screening:
